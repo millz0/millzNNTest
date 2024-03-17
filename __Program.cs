@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 
@@ -195,7 +196,7 @@ namespace SimplePerceptron.OOP
         /// 乱数発生用 使いまわして一様にする
         /// </summary>
         private static Random rnd = new Random();
-        private static double RandomNumber => 0;// (Math.Sign(rnd.NextDouble() - 0.5d) * rnd.NextDouble());
+        private static double RandomNumber => (Math.Sign(rnd.NextDouble() - 0.5d) * rnd.NextDouble());
 
         private double _alpha = 0.9d;
         private double _eta = 0.01d;
@@ -204,8 +205,8 @@ namespace SimplePerceptron.OOP
         private List<double> _weightModify;
         private List<double> TotalWeightModify;
 
-        private Dictionary<INeuron, double> _forwardSignal = new Dictionary<INeuron, double>();
-        private Dictionary<INeuron, double> _backwardSignal = new Dictionary<INeuron, double>();
+        protected Dictionary<INeuron, double> _forwardSignal = new Dictionary<INeuron, double>();
+        protected Dictionary<INeuron, double> _backwardSignal = new Dictionary<INeuron, double>();
         private double _bias = 0d;
         private double _biasModify = 0d;
         private double TotalBiasModify = 0d;
@@ -222,6 +223,7 @@ namespace SimplePerceptron.OOP
                 _weightModify.Add(0);
                 TotalWeightModify.Add(0);
             }
+            _bias = RandomNumber;
         }
 
         public void updateTotalWeight(int batchSize)
@@ -240,7 +242,7 @@ namespace SimplePerceptron.OOP
             }
         }
 
-        private double ActivationFunction(double value) => 1.0 / (1.0 + Math.Exp(-value)); // Sigmoid関数 
+        protected virtual double ActivationFunction(double value) => 1.0 / (1.0 + Math.Exp(-value)); // Sigmoid関数 
 
         /// <summary>
         /// 順方向の伝搬を受信 
@@ -266,11 +268,19 @@ namespace SimplePerceptron.OOP
                 PropagateToBackward();
         }
 
-        /// <summary>
+        // <summary>
         /// 順方向のパーセプトロンへの伝送
         /// </summary>
         /// <param name="signal"></param>
         private void PropagateToForward()
+        {
+            calcOutput();
+            propagateOutput();
+
+        }
+
+
+        protected virtual void calcOutput()
         {
             double _sum = 0.0d;
             for (int i = 0; i < _inputs.Count; i++)
@@ -279,11 +289,16 @@ namespace SimplePerceptron.OOP
             }
             _sum += _bias; // バイアスを足してn+1の行列にする
             OutputValue = ActivationFunction(_sum);
+
+            _forwardSignal.Clear();
+        }
+
+        protected virtual void propagateOutput()
+        {
             foreach (var output in _outputs)
             {
                 output.ReceiptFromForward(this, OutputValue);
             }
-            _forwardSignal.Clear();
         }
 
         /// <summary>
@@ -308,17 +323,22 @@ namespace SimplePerceptron.OOP
             _backwardSignal.Clear();
         }
     }
-}
 
-namespace SimplePerceptron.OOP
-{
+    /// <summary>
+    /// 出力層の値を取り出すためのニューロン
+    /// </summary>
+    public class Output : Perceptron
+    {
+        protected override double ActivationFunction(double value) => value; // Sigmoid関数 
+    }
+
     /// <summary>
     /// 出力層の値を取り出すためのニューロン
     /// </summary>
     public class OutputScalar : NeuronBase
     {
         private readonly double delta = 1e-7; // ゼロ割を防ぐための微小値
-
+        double tempOut = 0;
         /// <summary>
         /// 学習する(逆方向伝搬)
         /// </summary>
@@ -326,23 +346,77 @@ namespace SimplePerceptron.OOP
         public double Train(double teacherValue)
         {
 
-             var loss = ( OutputValue- teacherValue);
+            var loss = (OutputValue - teacherValue);
             //var loss = -(teacherValue / (OutputValue + delta))+((1- teacherValue) /(1- OutputValue + delta));
-            _inputs[0].ReceiptFromBackward(this, loss * ActivationFunction_df(this));
-           
-           //_inputs[0].ReceiptFromBackward(this,teacherValue - OutputValue);
+            _inputs[0].ReceiptFromBackward(this, loss);//* ActivationFunction_df(this)
+
+            //_inputs[0].ReceiptFromBackward(this,teacherValue - OutputValue);
             return loss;
         }
 
-        // protected double ErrorFunction(double teacherValue) => (teacherValue - OutputValue) * ActivationFunction_df(this); // 誤差関数
+        //// protected double ErrorFunction(double teacherValue) => (teacherValue - OutputValue) * ActivationFunction_df(this); // 誤差関数
+
+        //protected override void propagateOutput()
+        //{ }
+
+        //protected override void calcOutput()
+        //{
+        //    double _sum = 0.0d;
+        //    for (int i = 0; i < _inputs.Count; i++)
+        //    {
+        //        _sum += Math.Exp(_forwardSignal[_inputs[i]]);
+        //    }
+        //    OutputValue = Math.Exp(tempOut) / _sum;
+
+        //    _forwardSignal.Clear();
+        //}
 
         /// <summary>
         /// 順方向の伝搬を受信 
         /// </summary>
         /// <param name="neuron">入力側のニューロン</param>
         /// <param name="signal">入力値</param>
-        override public void ReceiptFromForward(INeuron neuron, double signal) => OutputValue = signal;
+        override public void ReceiptFromForward(INeuron neuron, double signal)
+        {
+            //base.ReceiptFromForward(neuron, signal);
+            OutputValue = signal;
+
+            _outputs[0].ReceiptFromForward(this, OutputValue);
+        }
     }
+    public class SoftMax : NeuronBase
+    {
+
+        protected Dictionary<INeuron, double> _forwardSignal = new Dictionary<INeuron, double>();
+
+        /// <summary>
+        /// 順方向の伝搬を受信 
+        /// </summary>
+        /// <param name="neuron">入力側のニューロン</param>
+        /// <param name="signal">入力値</param>
+        override public void ReceiptFromForward(INeuron neuron, double signal)
+        {
+            _forwardSignal[neuron] = signal;
+            double _sum = 0;
+            if (_forwardSignal.Count == _inputs.Count) // 入力側の刺激が全て届いたら伝搬する
+            {
+                foreach(var input in _inputs) 
+                {
+                    _sum += Math.Exp(input.OutputValue);
+
+                }
+                foreach (var input in _inputs)
+                {
+                    input.OutputValue= Math.Exp(input.OutputValue) / _sum;
+
+                }
+            }
+        }
+              
+
+        
+    }
+
 }
 
 
@@ -384,7 +458,7 @@ namespace ConsoleApp1
         static void Main(string[] args)
         {
             var result = new List<(double, double, double)>();
-            for (int k = 0; k < 10; k++)
+            for (int k = 0; k < 5; k++)
             {
                 OOP(ref result);
             }
@@ -402,8 +476,10 @@ namespace ConsoleApp1
             // 入力層 = 2, 隠れ層 = 2, 出力層=1 のNN
             var _inputNN = NeuronBase.GetInstance<InputScalar>(4, "入力層");
             var _hideNN = NeuronBase.GetInstance<Perceptron>(8, "隠れ層");
-            var _outNN = NeuronBase.GetInstance<Perceptron>(3, "出力層");
+            var _outNN = NeuronBase.GetInstance<Output>(3, "出力層");
             var _outputScalar = NeuronBase.GetInstance<OutputScalar>(3, "出力値");
+
+            var _softMAx = NeuronBase.GetInstance<SoftMax>(1, "出力");
 
             // ネットワークの構成
             foreach (var inputNN in _inputNN)
@@ -419,17 +495,33 @@ namespace ConsoleApp1
             //_hideNN[0].SetNeuron(_inputNN, _outNN); // 入力:i0,i1  出力:o0
             //_hideNN[1].SetNeuron(_inputNN, _outNN); // 入力:i0,i1  出力:o0
 
+            //foreach (var outNN in _outNN)
+            //{
+            //    outNN.SetNeuron(_hideNN, _outputScalar);
+            //}
+            //
+            ////for (var index=0; index<_outNN.Length; index++)
+            ////{
+            ////    _outNN[index].SetNeuron(_hideNN, _outputScalar[index]);
+            ////}
+            //
+            //foreach (var outputScalar in _outputScalar)
+            //{
+            //    outputScalar.SetNeuron(_outNN, (INeuron)null);
+            //}
             _outNN[0].SetNeuron(_hideNN, _outputScalar[0]); // 入力:h1,h2  出力:s0
-            _outputScalar[0].SetNeuron(_outNN[0], (INeuron)null); // 入力:o0  出力:null
+            _outputScalar[0].SetNeuron(_outNN[0], _softMAx); // 入力:o0  出力:null
 
             _outNN[1].SetNeuron(_hideNN, _outputScalar[1]); // 入力:h1,h2  出力:s0
-            _outputScalar[1].SetNeuron(_outNN[1], (INeuron)null); // 入力:o0  出力:null
+            _outputScalar[1].SetNeuron(_outNN[1], _softMAx); // 入力:o0  出力:null
 
             _outNN[2].SetNeuron(_hideNN, _outputScalar[2]); // 入力:h1,h2  出力:s0
-            _outputScalar[2].SetNeuron(_outNN[2], (INeuron)null); // 入力:o0  出力:null
+            _outputScalar[2].SetNeuron(_outNN[2], _softMAx); // 入力:o0  出力:null
 
-            // 訓練用XORデータ入力＋出力（教師）
-            // 入力1(X),入力2(Y),教師データ
+            _softMAx[0].SetNeuron(_outputScalar, (INeuron)null);
+
+            //訓練用XORデータ入力＋出力（教師）
+            //入力1(X),入力2(Y),教師データ
             var trainings = new InputData[] {
                 new InputData(100,100,100,100,(1,0,0)),
                 new InputData(100,100, 10,100,(1,0,0)),
@@ -467,15 +559,15 @@ namespace ConsoleApp1
             //}
 
             // 学習のパラメータ
-            int epochs = 1000; // エポック数
-            int batchSize = 5; // ミニバッチのサイズ
+            int epochs = 2000; // エポック数
+            int batchSize = 4; // ミニバッチのサイズ
 
             var rnd = new Random();
             double lastLoss = 100;
             for (int epoch = 0; epoch < epochs; epoch++)
             {
                 // データセットをシャッフルする（過学習を防ぐため）
-                trainings = trainings.OrderBy(x => rnd.Next()).ToList();
+                //trainings = trainings.OrderBy(x => rnd.Next()).ToList();
 
                 var E = new List<double>();
                 // ミニバッチごとに学習を行う
@@ -489,8 +581,18 @@ namespace ConsoleApp1
                     {
                         for (int j = 0; j < _inputNN.Count(); j++)
                             _inputNN[j].Infer(data.InputValue[j]);
+
+                        //double _sum = 0.0d;
+                        //for (int j = 0; j < _outputScalar.Count(); j++)
+                        //{          
+                        //    _sum += Math.Exp(_outputScalar[j].OutputValue);
+
+                        //}
+
                         for (int j = 0; j < _outputScalar.Count(); j++)
                         {
+                            //_outputScalar[j].OutputValue = Math.Exp(_outputScalar[j].OutputValue) / _sum;
+
                             var val = _outputScalar[j].Train(data.T[j]);
                             E.Add(val);
                         }
@@ -521,9 +623,21 @@ namespace ConsoleApp1
             for (int i = 0; i < _inputNN.Count(); i++)
                 _inputNN[i].Infer(tests.InputValue[i]);
 
-            result.Add((_outputScalar[0].OutputValue, Math.Abs(_outputScalar[0].OutputValue - tests.T[0]), lastLoss));
+            //double _sums = 0.0d;
+            //for (int j = 0; j < _outputScalar.Count(); j++)
+            //{
+            //    _sums += Math.Exp(_outputScalar[j].OutputValue);
 
-            Console.WriteLine($"結果=================={_outputScalar[0].OutputValue.ToString("0.00")},,{_outputScalar[1].OutputValue.ToString("0.00")},,{_outputScalar[2].OutputValue.ToString("0.00")}");
+            //}
+
+            //for (int j = 0; j < _outputScalar.Count(); j++)
+            //{
+            //    _outputScalar[j].OutputValue = Math.Exp(_outputScalar[j].OutputValue) / _sums;
+            //}
+
+            result.Add((_outputScalar[0].OutputValue, Math.Abs(_outputScalar[0].OutputValue - tests.T[0]), lastLoss));
+            Console.WriteLine($"結果=================={_outNN[0].OutputValue.ToString("0.00")},,{_outNN[1].OutputValue.ToString("0.00")},,{_outNN[2].OutputValue.ToString("0.00")}");
+            Console.WriteLine($"             ========={_outputScalar[0].OutputValue.ToString("0.00")},,{_outputScalar[1].OutputValue.ToString("0.00")},,{_outputScalar[2].OutputValue.ToString("0.00")}");
         }
     }
 }
